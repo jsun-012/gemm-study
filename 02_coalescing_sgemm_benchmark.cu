@@ -14,11 +14,12 @@
     } \
 }
 
-__global__ void naive_sgemm(int M, int N, int K, float alpha, const float* A,
-                            const float* B, float beta, float* C) {
+__global__ void coalescing_sgemm(int M, int N, int K, float alpha, const float* A,
+                                 const float* B, float beta, float* C) {
     // compute position in C that this thread will compute
-    const uint x = blockIdx.x * blockDim.x + threadIdx.x;
-    const uint y = blockIdx.y * blockDim.y + threadIdx.y;
+    // threads within a block access the same values in A, thread access consecutive values in B
+    const uint x = blockIdx.y * blockDim.y + threadIdx.y;
+    const uint y = blockIdx.x * blockDim.x + threadIdx.x;
 
     // if condition is necessary if matrix dimensions are not multiples of block size
     if (x < N && y < M) {
@@ -27,7 +28,7 @@ __global__ void naive_sgemm(int M, int N, int K, float alpha, const float* A,
             sum += A[x * K + k] * B[k * N + y];
         }
 
-        C[y * N + x] = alpha * sum + beta * C[y * N + x];
+        C[x * N + y] = alpha * sum + beta * C[x * N + y];
     }                           
 }
 
@@ -40,7 +41,7 @@ int main() {
     float alpha = 1.0f;
     float beta = 0.0f;
 
-    printf("Benchmarking Naive SGEMM [M=%d, N=%d, K=%d]\n", M, N, K);
+    printf("Benchmarking Coalescing SGEMM [M=%d, N=%d, K=%d]\n", M, N, K);
 
     // Grid config: x covers N (cols), y covers M (rows) to match kernel checks
     dim3 gridDim(CEIL_DIV(N, 32), CEIL_DIV(M, 32), 1);
@@ -63,7 +64,7 @@ int main() {
     CHECK_CUDA(cudaMemset(d_C, 0, size_C));
 
     // 4. Warm-up
-    naive_sgemm<<<gridDim, blockDim>>>(M, N, K, alpha, d_A, d_B, beta, d_C);
+    coalescing_sgemm<<<gridDim, blockDim>>>(M, N, K, alpha, d_A, d_B, beta, d_C);
     CHECK_CUDA(cudaGetLastError());
     CHECK_CUDA(cudaDeviceSynchronize());
 
@@ -76,7 +77,7 @@ int main() {
 
     CHECK_CUDA(cudaEventRecord(start));
     for (int i = 0; i < n_iter; i++) {
-        naive_sgemm<<<gridDim, blockDim>>>(M, N, K, alpha, d_A, d_B, beta, d_C);
+        coalescing_sgemm<<<gridDim, blockDim>>>(M, N, K, alpha, d_A, d_B, beta, d_C);
     }
     CHECK_CUDA(cudaEventRecord(stop));
     CHECK_CUDA(cudaEventSynchronize(stop));
